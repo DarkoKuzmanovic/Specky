@@ -108,7 +108,7 @@
         "command": "specky.openDashboard",
         "title": "Open Dashboard",
         "category": "Specky",
-        "icon": "$(dashboard)"
+        "icon": "$(layout-panel)"
       },
       {
         "command": "specky.createSpec",
@@ -150,6 +150,13 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "specky.openDashboard",
+          "when": "workspaceFolderCount > 0",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "specky.refreshArtifacts",

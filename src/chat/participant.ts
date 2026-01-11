@@ -13,6 +13,23 @@ import { CommandPrompts } from "./prompts.js";
 
 const PARTICIPANT_ID = "specky.specky";
 
+/**
+ * Follow-up suggestions for each command to guide users through the workflow
+ */
+const FOLLOWUP_MAP: Record<string, vscode.ChatFollowup[]> = {
+  specify: [
+    { prompt: "/clarify", message: "Identify ambiguities", command: "clarify" },
+    { prompt: "/plan", message: "Create technical plan", command: "plan" },
+  ],
+  plan: [{ prompt: "/tasks", message: "Break down into tasks", command: "tasks" }],
+  tasks: [{ prompt: "/implement", message: "Start implementing", command: "implement" }],
+  clarify: [
+    { prompt: "/specify", message: "Update specification", command: "specify" },
+    { prompt: "/plan", message: "Proceed to planning", command: "plan" },
+  ],
+  implement: [{ prompt: "/implement", message: "Implement next task", command: "implement" }],
+};
+
 export class SpeckyChatParticipant {
   private participant: vscode.ChatParticipant;
   private activeFeature: Feature | null = null;
@@ -26,6 +43,65 @@ export class SpeckyChatParticipant {
     this.participant = vscode.chat.createChatParticipant(PARTICIPANT_ID, this.handleRequest.bind(this));
 
     this.participant.iconPath = new vscode.ThemeIcon("checklist");
+
+    // Register follow-up provider for intelligent next-step suggestions
+    this.participant.followupProvider = {
+      provideFollowups: (
+        result: vscode.ChatResult,
+        _context: vscode.ChatContext,
+        _token: vscode.CancellationToken
+      ): vscode.ProviderResult<vscode.ChatFollowup[]> => {
+        const command = result.metadata?.command as string | undefined;
+        if (!command || command === "error" || command === "help") {
+          return [];
+        }
+        return FOLLOWUP_MAP[command] || [];
+      },
+    };
+  }
+
+  /**
+   * Gathers workspace context for implementation guidance
+   * Reads package.json and existing code patterns
+   */
+  private async getWorkspaceContext(): Promise<string> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return "";
+    }
+
+    const context: string[] = [];
+
+    try {
+      // Read package.json for project info
+      const packageJsonUri = vscode.Uri.joinPath(workspaceFolders[0].uri, "package.json");
+      const packageJsonContent = await vscode.workspace.fs.readFile(packageJsonUri);
+      const packageJson = JSON.parse(packageJsonContent.toString());
+
+      context.push(`<project_info>`);
+      context.push(`Name: ${packageJson.name || "unknown"}`);
+      context.push(`Type: ${packageJson.type || "commonjs"}`);
+      if (packageJson.dependencies) {
+        context.push(`Dependencies: ${Object.keys(packageJson.dependencies).join(", ")}`);
+      }
+      if (packageJson.devDependencies) {
+        context.push(`Dev Dependencies: ${Object.keys(packageJson.devDependencies).join(", ")}`);
+      }
+      context.push(`</project_info>`);
+    } catch {
+      // package.json not found or invalid - that's okay
+    }
+
+    try {
+      // Check for TypeScript config
+      const tsconfigUri = vscode.Uri.joinPath(workspaceFolders[0].uri, "tsconfig.json");
+      await vscode.workspace.fs.stat(tsconfigUri);
+      context.push(`<typescript>Project uses TypeScript</typescript>`);
+    } catch {
+      // No tsconfig - that's okay
+    }
+
+    return context.join("\n");
   }
 
   private async handleRequest(
@@ -303,13 +379,17 @@ export class SpeckyChatParticipant {
     const plan = await this.fileManager.readArtifact(this.activeFeature.id, "plan");
     const tasks = await this.fileManager.readArtifact(this.activeFeature.id, "tasks");
 
+    // Gather workspace context for implementation guidance
+    const workspaceContext = await this.getWorkspaceContext();
+
     const chatModel = await this.modelSelector.selectModel(targetModel, request.model);
     const systemPrompt = CommandPrompts.implement(
       this.activeFeature.name,
       spec || "",
       plan || "",
       tasks || "",
-      nextTask.title
+      nextTask.title,
+      workspaceContext || undefined
     );
     const userPrompt = cleanPrompt || `Implement the task: "${nextTask.title}"`;
 
