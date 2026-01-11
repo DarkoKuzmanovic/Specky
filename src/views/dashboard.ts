@@ -6,7 +6,7 @@
 import * as vscode from "vscode";
 import { SpeckyFileManager } from "../services/fileManager.js";
 import { ProgressTracker } from "../services/progressTracker.js";
-import { DashboardState, WebviewMessage, ArtifactType, Feature } from "../types.js";
+import { DashboardState, WebviewMessage, Feature } from "../types.js";
 
 export class SpeckyDashboard {
   public static currentPanel: SpeckyDashboard | undefined;

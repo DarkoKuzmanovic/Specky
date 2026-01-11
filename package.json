@@ -123,6 +123,11 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "specky.selectModelForCommand",
+        "title": "Set Model for Command",
+        "category": "Specky"
+      },
+      {
         "command": "specky.refreshArtifacts",
         "title": "Refresh Artifacts",
         "category": "Specky",
@@ -158,11 +163,6 @@
         },
         {
           "command": "specky.createSpec",
-          "when": "view == speckyArtifacts",
-          "group": "navigation"
-        },
-        {
-          "command": "specky.selectModel",
           "when": "view == speckyArtifacts",
           "group": "navigation"
         }

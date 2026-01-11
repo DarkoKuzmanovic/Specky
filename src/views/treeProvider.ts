@@ -5,19 +5,27 @@
 
 import * as vscode from "vscode";
 import { SpeckyFileManager } from "../services/fileManager.js";
-import { Feature, ArtifactType, ARTIFACT_FILES } from "../types.js";
+import { Feature, ArtifactType } from "../types.js";
 
-type TreeItemType = FeatureItem | ArtifactItem;
+type TreeItemType = FeatureItem | ArtifactItem | ModelSettingsHeader | ModelSettingItem;
 
 export class SpeckyTreeProvider implements vscode.TreeDataProvider<TreeItemType> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeItemType | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private activeFeature: Feature | null = null;
+  private configListener: vscode.Disposable;
 
   constructor(private readonly fileManager: SpeckyFileManager) {
     // Listen for file changes
     this.fileManager.onDidChange(() => this.refresh());
+
+    // Listen for configuration changes to update model settings display
+    this.configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("specky")) {
+        this.refresh();
+      }
+    });
   }
 
   refresh(): void {
@@ -35,13 +43,20 @@ export class SpeckyTreeProvider implements vscode.TreeDataProvider<TreeItemType>
 
   async getChildren(element?: TreeItemType): Promise<TreeItemType[]> {
     if (!element) {
-      // Root level - show features
-      return this.getFeatureItems();
+      // Root level - show features and model settings section
+      const featureItems = await this.getFeatureItems();
+      const modelSettingsHeader = new ModelSettingsHeader();
+      return [...featureItems, modelSettingsHeader];
     }
 
     if (element instanceof FeatureItem) {
       // Feature level - show artifacts
       return this.getArtifactItems(element.feature);
+    }
+
+    if (element instanceof ModelSettingsHeader) {
+      // Model settings - show individual command model settings
+      return this.getModelSettingItems();
     }
 
     return [];
@@ -66,8 +81,24 @@ export class SpeckyTreeProvider implements vscode.TreeDataProvider<TreeItemType>
     return items;
   }
 
+  private getModelSettingItems(): ModelSettingItem[] {
+    const config = vscode.workspace.getConfiguration("specky");
+    const commands: { id: string; label: string; setting: string; fallback: string }[] = [
+      { id: "specify", label: "Specify", setting: "specifyModel", fallback: "claude-opus-4.5" },
+      { id: "plan", label: "Plan", setting: "planModel", fallback: "claude-opus-4.5" },
+      { id: "tasks", label: "Tasks", setting: "tasksModel", fallback: "claude-sonnet-4.5" },
+      { id: "implement", label: "Implement", setting: "implementationModel", fallback: "claude-sonnet-4.5" },
+    ];
+
+    return commands.map((cmd) => {
+      const currentModel = config.get<string>(cmd.setting) || cmd.fallback;
+      return new ModelSettingItem(cmd.id, cmd.label, cmd.setting, currentModel);
+    });
+  }
+
   dispose(): void {
     this._onDidChangeTreeData.dispose();
+    this.configListener.dispose();
   }
 }
 
@@ -151,5 +182,54 @@ class ArtifactItem extends vscode.TreeItem {
         arguments: [featureId, artifactType],
       };
     }
+  }
+}
+
+class ModelSettingsHeader extends vscode.TreeItem {
+  constructor() {
+    super("Model Settings", vscode.TreeItemCollapsibleState.Collapsed);
+
+    this.id = "model-settings-header";
+    this.contextValue = "modelSettingsHeader";
+    this.iconPath = new vscode.ThemeIcon("settings-gear");
+    this.tooltip = "Configure which AI model to use for each command";
+  }
+}
+
+class ModelSettingItem extends vscode.TreeItem {
+  constructor(
+    public readonly commandId: string,
+    label: string,
+    public readonly settingKey: string,
+    currentModel: string
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+
+    this.id = `model-setting-${commandId}`;
+    this.contextValue = "modelSetting";
+    this.description = this.formatModelName(currentModel);
+    this.iconPath = new vscode.ThemeIcon("symbol-method");
+    this.tooltip = new vscode.MarkdownString(
+      `**${label} Command**\n\nCurrent model: ${this.formatModelName(currentModel)}\n\nClick to change`
+    );
+
+    // Command to change the model
+    this.command = {
+      command: "specky.selectModelForCommand",
+      title: "Select Model",
+      arguments: [commandId, label, settingKey],
+    };
+  }
+
+  private formatModelName(model: string): string {
+    const names: Record<string, string> = {
+      "claude-opus-4.5": "Claude Opus 4.5",
+      "claude-sonnet-4.5": "Claude Sonnet 4.5",
+      "gpt-4o": "GPT-4o",
+      "gpt-4o-mini": "GPT-4o Mini",
+      o1: "o1",
+      "o1-mini": "o1 Mini",
+    };
+    return names[model] || model;
   }
 }

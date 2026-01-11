@@ -4,7 +4,7 @@
  */
 
 import * as vscode from "vscode";
-import { SpeckyCommand, Feature, ArtifactType } from "../types.js";
+import { SpeckyCommand, Feature } from "../types.js";
 import { SpeckyFileManager } from "../services/fileManager.js";
 import { ModelSelector } from "../services/modelSelector.js";
 import { QualityGateService } from "../services/qualityGate.js";

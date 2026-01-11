@@ -45,11 +45,26 @@ export class SpeckyFileManager {
   }
 
   /**
+   * Check if .specky directory exists
+   */
+  async speckyDirExists(): Promise<boolean> {
+    try {
+      await vscode.workspace.fs.stat(this.speckyDir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * List all features in .specky directory
    */
   async listFeatures(): Promise<Feature[]> {
     try {
-      await this.ensureSpeckyDir();
+      // Don't create .specky folder if it doesn't exist - just return empty list
+      if (!(await this.speckyDirExists())) {
+        return [];
+      }
       const entries = await vscode.workspace.fs.readDirectory(this.speckyDir);
 
       const features: Feature[] = [];

@@ -147,45 +147,33 @@ function registerCommands(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Select Model
+  // Select Model for specific command (called from tree view)
   context.subscriptions.push(
-    vscode.commands.registerCommand("specky.selectModel", async () => {
-      const commands: { label: string; id: string; setting: string }[] = [
-        { label: "Specify", id: "specify", setting: "specifyModel" },
-        { label: "Plan", id: "plan", setting: "planModel" },
-        { label: "Tasks", id: "tasks", setting: "tasksModel" },
-        { label: "Implement", id: "implement", setting: "implementationModel" },
-      ];
+    vscode.commands.registerCommand(
+      "specky.selectModelForCommand",
+      async (commandId: string, commandLabel: string, settingKey: string) => {
+        const availableModels = await modelSelector.listAvailableModels();
+        const currentModel = vscode.workspace.getConfiguration("specky").get<string>(settingKey);
 
-      const selectedCommand = await vscode.window.showQuickPick(commands, {
-        placeHolder: "Select command to configure model for",
-      });
+        const modelItems = availableModels.map((m) => ({
+          label: m.name,
+          description: `${m.vendor} - ${m.family}`,
+          id: m.id,
+          picked: m.id === currentModel || m.family === currentModel,
+        }));
 
-      if (!selectedCommand) {
-        return;
+        const selectedModel = await vscode.window.showQuickPick(modelItems, {
+          placeHolder: `Select model for ${commandLabel}`,
+        });
+
+        if (selectedModel) {
+          await vscode.workspace
+            .getConfiguration("specky")
+            .update(settingKey, selectedModel.id, vscode.ConfigurationTarget.Global);
+          vscode.window.showInformationMessage(`Updated ${commandLabel} model to ${selectedModel.label}`);
+        }
       }
-
-      const availableModels = await modelSelector.listAvailableModels();
-      const modelItems = availableModels.map((m) => ({
-        label: m.name,
-        description: `${m.vendor} - ${m.family}`,
-        id: m.id,
-      }));
-
-      // Add default models that might not be in the list yet but we want to allow?
-      // Actually, user wants "all activated models from Github Copilot", so availableModels should be enough.
-
-      const selectedModel = await vscode.window.showQuickPick(modelItems, {
-        placeHolder: `Select model for ${selectedCommand.label}`,
-      });
-
-      if (selectedModel) {
-        await vscode.workspace
-          .getConfiguration("specky")
-          .update(selectedCommand.setting, selectedModel.id, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`Updated ${selectedCommand.label} model to ${selectedModel.label}`);
-      }
-    })
+    )
   );
 }
 
