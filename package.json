@@ -1,0 +1,258 @@
+{
+  "name": "specky",
+  "displayName": "Specky",
+  "description": "Spec-driven development workflow for GitHub Copilot - specify, plan, implement",
+  "version": "1.0.0",
+  "publisher": "DarkoKuzmanovic",
+  "license": "MIT",
+  "author": {
+    "name": "Darko Kuzmanovic",
+    "email": "darko.kuzmanovic@gmail.com",
+    "url": "https://quz.ma"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DarkoKuzmanovic/specky"
+  },
+  "homepage": "https://github.com/DarkoKuzmanovic/specky#readme",
+  "bugs": {
+    "url": "https://github.com/DarkoKuzmanovic/specky/issues"
+  },
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "copilot",
+    "chat",
+    "specification",
+    "planning",
+    "spec-driven",
+    "ai",
+    "development",
+    "workflow"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "extensionDependencies": [
+    "github.copilot-chat"
+  ],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "specky.specky",
+        "name": "specky",
+        "fullName": "Specky",
+        "description": "Spec-driven development assistant",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "specify",
+            "description": "Generate or refine the specification"
+          },
+          {
+            "name": "plan",
+            "description": "Create a technical plan based on the specification"
+          },
+          {
+            "name": "tasks",
+            "description": "Break the plan into implementable tasks"
+          },
+          {
+            "name": "implement",
+            "description": "Implement tasks after quality gates pass"
+          },
+          {
+            "name": "clarify",
+            "description": "Identify and resolve ambiguities in the specification"
+          }
+        ],
+        "disambiguation": [
+          {
+            "category": "spec-driven-development",
+            "description": "The user wants to use spec-driven development workflow",
+            "examples": [
+              "Help me create a specification for this feature",
+              "Plan the architecture for my project",
+              "Break down the tasks for implementation",
+              "What's unclear in my spec?"
+            ]
+          }
+        ]
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "speckyArtifacts",
+          "name": "Specky",
+          "icon": "$(checklist)",
+          "when": "workspaceFolderCount > 0"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "speckyArtifacts",
+        "contents": "No specifications found.\n[Create Specification](command:specky.createSpec)\nUse @specky /specify in Copilot Chat to get started."
+      }
+    ],
+    "commands": [
+      {
+        "command": "specky.openDashboard",
+        "title": "Open Dashboard",
+        "category": "Specky",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "specky.createSpec",
+        "title": "Create New Specification",
+        "category": "Specky",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "specky.selectModel",
+        "title": "Set Command Models",
+        "category": "Specky",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "specky.refreshArtifacts",
+        "title": "Refresh Artifacts",
+        "category": "Specky",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "specky.openArtifact",
+        "title": "Open Artifact",
+        "category": "Specky"
+      },
+      {
+        "command": "specky.setActiveFeature",
+        "title": "Set Active Feature",
+        "category": "Specky"
+      },
+      {
+        "command": "specky.toggleTask",
+        "title": "Toggle Task Completion",
+        "category": "Specky"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "specky.refreshArtifacts",
+          "when": "view == speckyArtifacts",
+          "group": "navigation"
+        },
+        {
+          "command": "specky.openDashboard",
+          "when": "view == speckyArtifacts",
+          "group": "navigation"
+        },
+        {
+          "command": "specky.createSpec",
+          "when": "view == speckyArtifacts",
+          "group": "navigation"
+        },
+        {
+          "command": "specky.selectModel",
+          "when": "view == speckyArtifacts",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "specky.setActiveFeature",
+          "when": "view == speckyArtifacts && viewItem == feature"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Specky",
+      "properties": {
+        "specky.planningModel": {
+          "type": "string",
+          "default": "claude-opus-4.5",
+          "enum": [
+            "claude-opus-4.5",
+            "claude-sonnet-4.5",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o1",
+            "o1-mini"
+          ],
+          "enumDescriptions": [
+            "Claude Opus 4.5 - Best for complex reasoning and planning",
+            "Claude Sonnet 4.5 - Fast and capable",
+            "GPT-4o - OpenAI flagship model",
+            "GPT-4o Mini - Fast and cost-effective",
+            "o1 - OpenAI reasoning model",
+            "o1 Mini - Smaller reasoning model"
+          ],
+          "description": "Model for /specify, /plan, /tasks, and /clarify commands"
+        },
+        "specky.implementationModel": {
+          "type": "string",
+          "default": "claude-sonnet-4.5",
+          "enum": [
+            "claude-opus-4.5",
+            "claude-sonnet-4.5",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o1",
+            "o1-mini"
+          ],
+          "enumDescriptions": [
+            "Claude Opus 4.5 - Best for complex reasoning and planning",
+            "Claude Sonnet 4.5 - Fast and capable",
+            "GPT-4o - OpenAI flagship model",
+            "GPT-4o Mini - Fast and cost-effective",
+            "o1 - OpenAI reasoning model",
+            "o1 Mini - Smaller reasoning model"
+          ],
+          "description": "Model for /implement command"
+        },
+        "specky.specifyModel": {
+          "type": "string",
+          "default": "claude-opus-4.5",
+          "description": "Model for /specify command"
+        },
+        "specky.planModel": {
+          "type": "string",
+          "default": "claude-opus-4.5",
+          "description": "Model for /plan command"
+        },
+        "specky.tasksModel": {
+          "type": "string",
+          "default": "claude-sonnet-4.5",
+          "description": "Model for /tasks command"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.93.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "typescript-eslint": "^8.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.5.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.0"
+  }
+}
