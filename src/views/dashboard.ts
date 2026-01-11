@@ -1153,8 +1153,8 @@ export class SpeckyDashboard {
                                     <span class="tip-title">Check the .specky Folder</span>
                                 </div>
                                 <div class="tip-desc">
-                                    All artifacts live in <code>.specky/features/</code>. Each feature has its own folder
-                                    with spec.md, plan.md, and tasks.md files.
+                                    All artifacts live in your workspace's <code>.specky/</code> folder. Each feature has its own subdirectory
+                                    containing <code>spec.md</code>, <code>plan.md</code>, and <code>tasks.md</code>.
                                 </div>
                             </div>
                             <div class="tip-card">
