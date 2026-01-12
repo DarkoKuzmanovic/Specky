@@ -83,9 +83,13 @@ export class SpeckyDashboard {
         break;
 
       case "selectFeature": {
-        const feature = await this.fileManager.getFeature(message.featureId);
+        // M-1: Validate featureId against known features
+        const features = await this.fileManager.listFeatures();
+        const feature = features.find((f) => f.id === message.featureId);
         if (feature) {
           this.activeFeature = feature;
+          // M-2: Sync selection with extension state (tree view, status bar, chat participant)
+          await vscode.commands.executeCommand("specky.setActiveFeature", feature.id);
           await this.sendStateUpdate();
         }
         break;
@@ -97,6 +101,13 @@ export class SpeckyDashboard {
         break;
 
       case "openArtifact": {
+        // M-1: Validate featureId against known features before opening artifacts
+        const knownFeatures = await this.fileManager.listFeatures();
+        const validFeature = knownFeatures.find((f) => f.id === message.featureId);
+        if (!validFeature) {
+          vscode.window.showWarningMessage(`Unknown feature: ${message.featureId}`);
+          return;
+        }
         const uri = this.fileManager.getArtifactUri(message.featureId, message.artifactType);
         await vscode.window.showTextDocument(uri);
         break;
@@ -111,10 +122,14 @@ export class SpeckyDashboard {
   private async sendStateUpdate(): Promise<void> {
     const features = await this.fileManager.listFeatures();
 
-    // Update active feature if it no longer exists
+    // L-1: Update activeFeature from refreshed features list to avoid stale data
     if (this.activeFeature) {
-      const stillExists = features.find((f) => f.id === this.activeFeature?.id);
-      if (!stillExists) {
+      const updatedFeature = features.find((f) => f.id === this.activeFeature?.id);
+      if (updatedFeature) {
+        // Replace with fresh data from the updated list
+        this.activeFeature = updatedFeature;
+      } else {
+        // Feature no longer exists
         this.activeFeature = null;
       }
     }
@@ -136,14 +151,35 @@ export class SpeckyDashboard {
     this.sendStateUpdate();
   }
 
+  /**
+   * Generate a nonce for CSP
+   */
+  private getNonce(): string {
+    let text = "";
+    const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    for (let i = 0; i < 32; i++) {
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+  }
+
   private getHtmlContent(): string {
+    // Generate a nonce for CSP
+    const nonce = this.getNonce();
+
+    // Get codicon CSS URI
+    const codiconsUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "node_modules", "@vscode/codicons", "dist", "codicon.css")
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource} 'unsafe-inline'; font-src ${this.panel.webview.cspSource}; script-src 'nonce-${nonce}';">
     <title>Specky Dashboard</title>
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="${codiconsUri}" rel="stylesheet" />
     <style>
         :root {
             /* 4px Spacing Grid */
@@ -789,16 +825,16 @@ export class SpeckyDashboard {
             <h1>Specky</h1>
         </div>
         <div class="header-actions">
-            <button onclick="refresh()" class="secondary">
-                <i class="ph ph-arrows-clockwise"></i>
+            <button class="secondary" data-action="refresh">
+                <i class="codicon codicon-refresh"></i>
                 Refresh
             </button>
-            <button onclick="runCommand('specify')">
-                <i class="ph ph-plus"></i>
+            <button data-action="command" data-command="specify">
+                <i class="codicon codicon-add"></i>
                 New Feature
             </button>
-            <button class="secondary" onclick="showTab('guide')">
-                <i class="ph ph-question"></i>
+            <button class="secondary" data-action="show-tab" data-tab="guide">
+                <i class="codicon codicon-question"></i>
                 Help
             </button>
         </div>
@@ -817,10 +853,54 @@ export class SpeckyDashboard {
         </div>
     </div>
 
-    <script>
+    <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
         let currentState = { features: [], activeFeature: null, loading: true };
         let currentTab = 'features';
+
+        // HTML escape function to prevent XSS
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
+        }
+
+        // Event delegation for all clicks
+        document.addEventListener('click', (e) => {
+            const target = e.target.closest('[data-action]');
+            if (!target) return;
+
+            const action = target.dataset.action;
+
+            switch (action) {
+                case 'refresh':
+                    vscode.postMessage({ type: 'refreshRequest' });
+                    break;
+                case 'command':
+                    vscode.postMessage({
+                        type: 'runCommand',
+                        command: target.dataset.command,
+                        featureId: currentState.activeFeature?.id
+                    });
+                    break;
+                case 'show-tab':
+                    currentTab = target.dataset.tab;
+                    render();
+                    break;
+                case 'select-feature':
+                    currentTab = 'features';
+                    vscode.postMessage({ type: 'selectFeature', featureId: target.dataset.featureId });
+                    break;
+                case 'open-artifact':
+                    vscode.postMessage({
+                        type: 'openArtifact',
+                        featureId: target.dataset.featureId,
+                        artifactType: target.dataset.artifactType
+                    });
+                    break;
+            }
+        });
 
         window.addEventListener('message', event => {
             const message = event.data;
@@ -831,11 +911,6 @@ export class SpeckyDashboard {
         });
 
         vscode.postMessage({ type: 'ready' });
-
-        function showTab(tab) {
-            currentTab = tab;
-            render();
-        }
 
         function render() {
             renderFeatureList();
@@ -853,11 +928,13 @@ export class SpeckyDashboard {
             container.innerHTML = currentState.features.map(feature => {
                 const isActive = currentState.activeFeature?.id === feature.id && currentTab === 'features';
                 const { totalTasks, completedTasks, percentage } = feature.progress;
+                const escapedName = escapeHtml(feature.name);
+                const escapedId = escapeHtml(feature.id);
 
                 return \`
-                    <div class="feature-card \${isActive ? 'active' : ''}" onclick="selectFeature('\${feature.id}')">
+                    <div class="feature-card \${isActive ? 'active' : ''}" data-action="select-feature" data-feature-id="\${escapedId}">
                         <div class="feature-info">
-                            <div class="feature-name" title="\${feature.name}">\${feature.name}</div>
+                            <div class="feature-name" title="\${escapedName}">\${escapedName}</div>
                             <div class="feature-number">#\${feature.number.toString().padStart(3, '0')}</div>
                         </div>
                         <div class="feature-progress-mini">
@@ -885,12 +962,12 @@ export class SpeckyDashboard {
                 container.innerHTML = \`
                     <div class="empty-state animate-fade-in">
                         <div class="empty-icon-box">
-                            <i class="ph ph-files"></i>
+                            <i class="codicon codicon-files"></i>
                         </div>
                         <h3>No Feature Selected</h3>
                         <p>Select a feature from the sidebar to view implementation details and progress.</p>
-                        <button onclick="runCommand('specify')">
-                            <i class="ph ph-magic-wand"></i>
+                        <button data-action="command" data-command="specify">
+                            <i class="codicon codicon-wand"></i>
                             Create First Specification
                         </button>
                     </div>
@@ -898,10 +975,13 @@ export class SpeckyDashboard {
                 return;
             }
 
+            const escapedFeatureName = escapeHtml(feature.name);
+            const escapedFeatureId = escapeHtml(feature.id);
+
             const artifacts = [
-                { type: 'spec', name: 'Specification', icon: 'ph-file-text', exists: feature.artifacts.spec?.exists },
-                { type: 'plan', name: 'Plan', icon: 'ph-map-trifold', exists: feature.artifacts.plan?.exists },
-                { type: 'tasks', name: 'Tasks', icon: 'ph-list-checks', exists: feature.artifacts.tasks?.exists }
+                { type: 'spec', name: 'Specification', icon: 'codicon-file-text', exists: feature.artifacts.spec?.exists },
+                { type: 'plan', name: 'Plan', icon: 'codicon-map', exists: feature.artifacts.plan?.exists },
+                { type: 'tasks', name: 'Tasks', icon: 'codicon-tasklist', exists: feature.artifacts.tasks?.exists }
             ];
 
             const nextStep = getNextStep(feature);
@@ -911,8 +991,8 @@ export class SpeckyDashboard {
                     <div class="card">
                         <div class="card-header">
                             <div class="card-title-group">
-                                <div class="card-title">\${feature.name}</div>
-                                <div class="card-subtitle">\${feature.id}</div>
+                                <div class="card-title">\${escapedFeatureName}</div>
+                                <div class="card-subtitle">\${escapedFeatureId}</div>
                             </div>
                             <div class="feature-number" style="font-size: 16px; opacity: 1; font-weight: 600;">#\${feature.number.toString().padStart(3, '0')}</div>
                         </div>
@@ -920,10 +1000,13 @@ export class SpeckyDashboard {
                         <div class="artifacts-grid">
                             \${artifacts.map(a => \`
                                 <div class="artifact-card \${a.exists ? 'exists' : ''}"
-                                     onclick="\${a.exists ? \`openArtifact('\${feature.id}', '\${a.type}')\` : \`runCommand('\${a.type === 'spec' ? 'specify' : a.type === 'plan' ? 'plan' : 'tasks'}')\`}">
+                                     data-action="\${a.exists ? 'open-artifact' : 'command'}"
+                                     data-feature-id="\${escapedFeatureId}"
+                                     data-artifact-type="\${a.type}"
+                                     data-command="\${a.type === 'spec' ? 'specify' : a.type === 'plan' ? 'plan' : 'tasks'}">
                                     <div class="artifact-card-top">
                                         <div class="artifact-icon-box">
-                                            <i class="ph \${a.icon}"></i>
+                                            <i class="codicon \${a.icon}"></i>
                                         </div>
                                         <div class="artifact-status-dot \${a.exists ? 'exists' : ''}"></div>
                                     </div>
@@ -951,13 +1034,13 @@ export class SpeckyDashboard {
 
                             \${nextStep ? \`
                                 <div class="next-step-card" style="margin-top: var(--s2)">
-                                    <i class="ph ph-info next-step-icon"></i>
+                                    <i class="codicon codicon-info next-step-icon"></i>
                                     <div class="next-step-content">
                                         <div class="next-step-title">Recommended Next Step</div>
-                                        <div class="next-step-desc">\${nextStep.text}</div>
-                                        <button onclick="runCommand('\${nextStep.command}')">
-                                            <i class="ph \${nextStep.icon}"></i>
-                                            \${nextStep.buttonText}
+                                        <div class="next-step-desc">\${escapeHtml(nextStep.text)}</div>
+                                        <button data-action="command" data-command="\${nextStep.command}">
+                                            <i class="codicon \${nextStep.icon}"></i>
+                                            \${escapeHtml(nextStep.buttonText)}
                                         </button>
                                     </div>
                                 </div>
@@ -970,24 +1053,24 @@ export class SpeckyDashboard {
                             <div class="card-title" style="font-size: 14px;">Quick Actions</div>
                         </div>
                         <div class="actions-group">
-                            <button class="secondary" onclick="runCommand('specify')">
-                                <i class="ph ph-note-pencil"></i>
+                            <button class="secondary" data-action="command" data-command="specify">
+                                <i class="codicon codicon-edit"></i>
                                 Refine Spec
                             </button>
-                            <button class="secondary" onclick="runCommand('clarify')">
-                                <i class="ph ph-question"></i>
+                            <button class="secondary" data-action="command" data-command="clarify">
+                                <i class="codicon codicon-question"></i>
                                 Clarify Spec
                             </button>
-                            <button class="secondary" onclick="runCommand('plan')">
-                                <i class="ph ph-git-branch"></i>
+                            <button class="secondary" data-action="command" data-command="plan">
+                                <i class="codicon codicon-git-merge"></i>
                                 Update Plan
                             </button>
-                            <button class="secondary" onclick="runCommand('tasks')">
-                                <i class="ph ph-list-plus"></i>
+                            <button class="secondary" data-action="command" data-command="tasks">
+                                <i class="codicon codicon-list-unordered"></i>
                                 Update Tasks
                             </button>
-                            <button onclick="runCommand('implement')">
-                                <i class="ph ph-rocket-launch"></i>
+                            <button data-action="command" data-command="implement">
+                                <i class="codicon codicon-rocket"></i>
                                 Implement Next
                             </button>
                         </div>
@@ -1005,15 +1088,15 @@ export class SpeckyDashboard {
                                 <div class="card-title">How to Use Specky</div>
                                 <div class="card-subtitle">Spec-driven development workflow</div>
                             </div>
-                            <button class="secondary" onclick="showTab('features')" style="height: 28px; font-size: 12px;">
-                                <i class="ph ph-x"></i>
+                            <button class="secondary" data-action="show-tab" data-tab="features" style="height: 28px; font-size: 12px;">
+                                <i class="codicon codicon-close"></i>
                                 Close
                             </button>
                         </div>
 
                         <div class="guide-section">
                             <div class="guide-section-title">
-                                <i class="ph ph-flow-arrow"></i>
+                                <i class="codicon codicon-type-hierarchy"></i>
                                 The Specky Workflow
                             </div>
                             <div class="workflow-steps">
@@ -1102,14 +1185,14 @@ export class SpeckyDashboard {
                     <div class="card">
                         <div class="card-header" style="margin-bottom: var(--s4)">
                             <div class="card-title" style="font-size: 14px;">
-                                <i class="ph ph-lightbulb" style="color: var(--vscode-charts-yellow); margin-right: var(--s1);"></i>
+                                <i class="codicon codicon-lightbulb" style="color: var(--vscode-charts-yellow); margin-right: var(--s1);"></i>
                                 Tips &amp; Tricks
                             </div>
                         </div>
                         <div class="tips-grid">
                             <div class="tip-card">
                                 <div class="tip-header">
-                                    <i class="ph ph-target"></i>
+                                    <i class="codicon codicon-target"></i>
                                     <span class="tip-title">Be Specific Early</span>
                                 </div>
                                 <div class="tip-desc">
@@ -1119,7 +1202,7 @@ export class SpeckyDashboard {
                             </div>
                             <div class="tip-card">
                                 <div class="tip-header">
-                                    <i class="ph ph-arrows-split"></i>
+                                    <i class="codicon codicon-split-horizontal"></i>
                                     <span class="tip-title">Split Large Features</span>
                                 </div>
                                 <div class="tip-desc">
@@ -1129,7 +1212,7 @@ export class SpeckyDashboard {
                             </div>
                             <div class="tip-card">
                                 <div class="tip-header">
-                                    <i class="ph ph-pencil-simple"></i>
+                                    <i class="codicon codicon-edit"></i>
                                     <span class="tip-title">Edit Your Artifacts</span>
                                 </div>
                                 <div class="tip-desc">
@@ -1139,7 +1222,7 @@ export class SpeckyDashboard {
                             </div>
                             <div class="tip-card">
                                 <div class="tip-header">
-                                    <i class="ph ph-chat-circle-text"></i>
+                                    <i class="codicon codicon-comment-discussion"></i>
                                     <span class="tip-title">Use Clarify Often</span>
                                 </div>
                                 <div class="tip-desc">
@@ -1149,7 +1232,7 @@ export class SpeckyDashboard {
                             </div>
                             <div class="tip-card">
                                 <div class="tip-header">
-                                    <i class="ph ph-folder-open"></i>
+                                    <i class="codicon codicon-folder-opened"></i>
                                     <span class="tip-title">Check the .specky Folder</span>
                                 </div>
                                 <div class="tip-desc">
@@ -1159,7 +1242,7 @@ export class SpeckyDashboard {
                             </div>
                             <div class="tip-card">
                                 <div class="tip-header">
-                                    <i class="ph ph-arrow-counter-clockwise"></i>
+                                    <i class="codicon codicon-history"></i>
                                     <span class="tip-title">Iterate Your Spec</span>
                                 </div>
                                 <div class="tip-desc">
@@ -1191,39 +1274,18 @@ export class SpeckyDashboard {
 
         function getNextStep(feature) {
             if (!feature.artifacts.spec?.exists) {
-                return { text: "Start by generating a specification for this feature.", command: "specify", buttonText: "Generate Spec", icon: "ph-magic-wand" };
+                return { text: "Start by generating a specification for this feature.", command: "specify", buttonText: "Generate Spec", icon: "codicon-wand" };
             }
             if (!feature.artifacts.plan?.exists) {
-                return { text: "Specification is ready. Now create a technical implementation plan.", command: "plan", buttonText: "Create Plan", icon: "ph-map-trifold" };
+                return { text: "Specification is ready. Now create a technical implementation plan.", command: "plan", buttonText: "Create Plan", icon: "codicon-map" };
             }
             if (!feature.artifacts.tasks?.exists) {
-                return { text: "Plan is defined. Break it down into implementable tasks.", command: "tasks", buttonText: "Break Down Tasks", icon: "ph-list-checks" };
+                return { text: "Plan is defined. Break it down into implementable tasks.", command: "tasks", buttonText: "Break Down Tasks", icon: "codicon-tasklist" };
             }
             if (feature.progress.percentage < 100) {
-                return { text: "Everything is set. Start implementing the tasks step by step.", command: "implement", buttonText: "Continue Implementation", icon: "ph-rocket-launch" };
+                return { text: "Everything is set. Start implementing the tasks step by step.", command: "implement", buttonText: "Continue Implementation", icon: "codicon-rocket" };
             }
             return null;
-        }
-
-        function selectFeature(featureId) {
-            currentTab = 'features';
-            vscode.postMessage({ type: 'selectFeature', featureId });
-        }
-
-        function openArtifact(featureId, artifactType) {
-            vscode.postMessage({ type: 'openArtifact', featureId, artifactType });
-        }
-
-        function runCommand(command) {
-            vscode.postMessage({
-                type: 'runCommand',
-                command,
-                featureId: currentState.activeFeature?.id
-            });
-        }
-
-        function refresh() {
-            vscode.postMessage({ type: 'refreshRequest' });
         }
 
         render();

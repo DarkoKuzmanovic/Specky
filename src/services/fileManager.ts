@@ -185,11 +185,16 @@ export class SpeckyFileManager {
 
   /**
    * Parse task checkboxes from markdown content
+   * L-3: Implements proper task nesting with indentation stack
    */
   parseTasksFromContent(content: string): Task[] {
     const tasks: Task[] = [];
     const lines = content.split("\n");
     let taskId = 0;
+
+    // Stack to track parent tasks at each indentation level
+    // Index represents indent level (0, 2, 4, etc. / 2)
+    const parentStack: (Task | null)[] = [null];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -197,6 +202,7 @@ export class SpeckyFileManager {
 
       if (match) {
         const indent = match[1].length;
+        const indentLevel = Math.floor(indent / 2); // Normalize: 0 spaces = level 0, 2 spaces = level 1, etc.
         const completed = match[2].toLowerCase() === "x";
         const title = match[3].trim();
 
@@ -207,16 +213,41 @@ export class SpeckyFileManager {
           lineNumber: i + 1,
         };
 
-        // Simple flat list for now (subtask nesting can be added later)
-        if (indent === 0) {
+        if (indentLevel === 0) {
+          // Top-level task
           tasks.push(task);
+          // Reset stack and set this as the parent at level 0
+          parentStack.length = 1;
+          parentStack[0] = task;
         } else {
-          // Find parent task
-          const parent = tasks[tasks.length - 1];
+          // Nested task - find the correct parent
+          // The parent is at level (indentLevel - 1)
+          const parentLevel = indentLevel - 1;
+          const parent = parentStack[parentLevel];
+
           if (parent) {
             parent.subtasks = parent.subtasks || [];
             parent.subtasks.push(task);
+          } else {
+            // No parent found at expected level, attach to last known parent or root
+            // This handles cases where indentation jumps unexpectedly
+            for (let level = parentLevel - 1; level >= 0; level--) {
+              if (parentStack[level]) {
+                parentStack[level]!.subtasks = parentStack[level]!.subtasks || [];
+                parentStack[level]!.subtasks!.push(task);
+                break;
+              }
+            }
+            // If still no parent found, add to root
+            if (!parentStack.slice(0, parentLevel).some((p) => p !== null)) {
+              tasks.push(task);
+            }
           }
+
+          // Update stack: set this task as potential parent for next level
+          parentStack[indentLevel] = task;
+          // Clear any deeper levels
+          parentStack.length = indentLevel + 1;
         }
       }
     }
@@ -262,7 +293,12 @@ export class SpeckyFileManager {
     await this.ensureSpeckyDir();
 
     const number = await this.getNextFeatureNumber();
-    const dirName = `${number.toString().padStart(3, "0")}-${this.slugify(name)}`;
+    // M-3: Validate slug output and fallback to "new-feature" if empty
+    let slug = this.slugify(name);
+    if (!slug) {
+      slug = "new-feature";
+    }
+    const dirName = `${number.toString().padStart(3, "0")}-${slug}`;
     const featurePath = vscode.Uri.joinPath(this.speckyDir, dirName);
 
     await vscode.workspace.fs.createDirectory(featurePath);
@@ -272,7 +308,7 @@ export class SpeckyFileManager {
     return {
       id: dirName,
       number,
-      name: this.slugify(name),
+      name: slug,
       path: featurePath.fsPath,
       artifacts: {},
       progress: { totalTasks: 0, completedTasks: 0, percentage: 0 },

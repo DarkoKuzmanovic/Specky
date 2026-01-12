@@ -29,6 +29,21 @@ export function activate(context: vscode.ExtensionContext): void {
     return;
   }
 
+  // M-4: Check workspace trust before enabling file watchers and webview
+  if (!vscode.workspace.isTrusted) {
+    // Register minimal commands for untrusted workspaces
+    registerMinimalCommands(context);
+
+    // Re-activate when workspace becomes trusted
+    context.subscriptions.push(
+      vscode.workspace.onDidGrantWorkspaceTrust(() => {
+        // Dispose existing registrations and re-activate
+        vscode.commands.executeCommand("workbench.action.reloadWindow");
+      })
+    );
+    return;
+  }
+
   // Initialize services
   fileManager = new SpeckyFileManager(workspaceFolder.uri);
   modelSelector = new ModelSelector();

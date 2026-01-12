@@ -26,9 +26,9 @@
   > Current `requiredSections` checks for `## Overview`, `## Requirements`, `## Acceptance Criteria`
   > But `src/chat/prompts.ts` generates `## Problem Statement`, `## Functional Requirements`, `## Success Criteria` > **Action:** Update `requiredSections` array to match actual prompt output headers
 
-- [ ] Update CHANGELOG.md release date
+- [x] Update CHANGELOG.md release date
 
-  > Change `[1.0.0] - 2026-01-XX` to actual release date
+  > ✅ Completed: Updated versions to 0.1.x scheme (0.1.1)
 
 - [ ] Verify `.vscodeignore` excludes dev artifacts
   > Ensure `src/`, `*.ts`, `node_modules/`, `.vscode/`, test files are excluded from VSIX
@@ -205,27 +205,27 @@ src/test/
 
 > Ideas for future versions after initial marketplace release.
 
-### v1.1 - Usability Improvements
+### v0.2 - Usability Improvements
 
 - [ ] **Subtask nesting** - Support deeper task hierarchies in `progressTracker.ts`
 - [ ] **Keyboard shortcuts** - Add keybindings for common actions
 - [ ] **Quick Pick feature selector** - Faster feature switching
 - [ ] **Template support** - Custom spec/plan templates per project
 
-### v1.2 - Intelligence Features
+### v0.3 - Intelligence Features
 
 - [ ] **Spec diff detection** - Warn when spec changes after plan is created
 - [ ] **Automatic task suggestions** - AI-generated task breakdowns from plan
 - [ ] **Implementation hints** - Contextual code suggestions during `/implement`
 - [ ] **Cross-feature dependencies** - Track relationships between features
 
-### v1.3 - Collaboration
+### v0.4 - Collaboration
 
 - [ ] **Export to GitHub Issues** - Convert tasks.md to GitHub issues
 - [ ] **Spec review workflow** - Request spec review before planning
 - [ ] **Team settings sync** - Shared model preferences via `.specky/settings.json`
 
-### v1.4 - Analytics & Insights
+### v0.5 - Analytics & Insights
 
 - [ ] **Telemetry** - Anonymous usage analytics (opt-in)
 - [ ] **Time tracking** - Estimate vs actual time per feature

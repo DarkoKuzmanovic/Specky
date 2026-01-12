@@ -5,7 +5,43 @@ All notable changes to the Specky extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-01-XX
+## [0.1.1] - 2026-01-12
+
+### Security
+
+- **H-1**: Fixed XSS vulnerability in dashboard webview
+
+  - Added strict Content Security Policy (CSP) with nonce
+  - Implemented HTML escaping for all dynamic content (feature names, IDs)
+  - Removed all inline event handlers, replaced with event delegation
+
+- **H-2**: Removed remote script dependency
+
+  - Replaced unpkg.com Phosphor icons with bundled VS Code codicons
+  - CSP now restricts to local resources only
+
+- **M-1**: Added path traversal protection
+
+  - Feature IDs now validated against known features before opening artifacts
+
+- **M-4**: Added workspace trust support
+  - Extension now respects `vscode.workspace.isTrusted`
+  - Declared `capabilities.untrustedWorkspaces` in package.json
+
+### Fixed
+
+- **M-2**: Dashboard feature selection now syncs with tree view, status bar, and chat participant
+- **M-3**: Empty feature names now fallback to "new-feature" instead of creating invalid directories
+- **L-1**: Active feature data now refreshes from updated list to avoid stale display
+- **L-2**: Fixed UTF-8 decoding of package.json when reading workspace context
+- **L-3**: Task nesting now properly handles multiple indentation levels
+
+### Changed
+
+- Migrated from Phosphor icons to VS Code codicons for better integration
+- Updated ChatFollowup `message` property to `label` for API compatibility
+
+## [0.1.0] - 2026-01-11
 
 ### Added
 

@@ -2,7 +2,7 @@
   "name": "specky",
   "displayName": "Specky",
   "description": "Spec-driven development workflow for GitHub Copilot - specify, plan, implement",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "publisher": "DarkoKuzmanovic",
   "license": "MIT",
   "author": {
@@ -43,6 +43,16 @@
   "extensionDependencies": [
     "github.copilot-chat"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Specky requires workspace trust to enable file watchers and the dashboard webview.",
+      "restrictedConfigurations": [
+        "specky.planningModel",
+        "specky.implementationModel"
+      ]
+    }
+  },
   "contributes": {
     "chatParticipants": [
       {
@@ -256,6 +266,7 @@
     "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/codicons": "^0.0.36",
     "typescript-eslint": "^8.0.0",
     "eslint": "^9.0.0",
     "typescript": "^5.5.0",

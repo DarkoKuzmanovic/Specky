@@ -18,16 +18,16 @@ const PARTICIPANT_ID = "specky.specky";
  */
 const FOLLOWUP_MAP: Record<string, vscode.ChatFollowup[]> = {
   specify: [
-    { prompt: "/clarify", message: "Identify ambiguities", command: "clarify" },
-    { prompt: "/plan", message: "Create technical plan", command: "plan" },
+    { prompt: "/clarify", label: "Identify ambiguities", command: "clarify" },
+    { prompt: "/plan", label: "Create technical plan", command: "plan" },
   ],
-  plan: [{ prompt: "/tasks", message: "Break down into tasks", command: "tasks" }],
-  tasks: [{ prompt: "/implement", message: "Start implementing", command: "implement" }],
+  plan: [{ prompt: "/tasks", label: "Break down into tasks", command: "tasks" }],
+  tasks: [{ prompt: "/implement", label: "Start implementing", command: "implement" }],
   clarify: [
-    { prompt: "/specify", message: "Update specification", command: "specify" },
-    { prompt: "/plan", message: "Proceed to planning", command: "plan" },
+    { prompt: "/specify", label: "Update specification", command: "specify" },
+    { prompt: "/plan", label: "Proceed to planning", command: "plan" },
   ],
-  implement: [{ prompt: "/implement", message: "Implement next task", command: "implement" }],
+  implement: [{ prompt: "/implement", label: "Implement next task", command: "implement" }],
 };
 
 export class SpeckyChatParticipant {
@@ -76,7 +76,8 @@ export class SpeckyChatParticipant {
       // Read package.json for project info
       const packageJsonUri = vscode.Uri.joinPath(workspaceFolders[0].uri, "package.json");
       const packageJsonContent = await vscode.workspace.fs.readFile(packageJsonUri);
-      const packageJson = JSON.parse(packageJsonContent.toString());
+      // L-2: Properly decode Uint8Array to UTF-8 string before JSON parsing
+      const packageJson = JSON.parse(Buffer.from(packageJsonContent).toString("utf-8"));
 
       context.push(`<project_info>`);
       context.push(`Name: ${packageJson.name || "unknown"}`);
