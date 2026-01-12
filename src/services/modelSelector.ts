@@ -17,18 +17,22 @@ const PLANNING_COMMANDS: SpeckyCommand[] = ["specify", "plan", "tasks", "clarify
 const IMPLEMENTATION_COMMANDS: SpeckyCommand[] = ["implement"];
 
 /**
- * Model family mappings for vscode.lm.selectChatModels
+ * Cached model information for display and lookup
  */
-const MODEL_FAMILIES: Record<string, string> = {
-  "claude-opus-4.5": "claude-opus-4.5",
-  "claude-sonnet-4.5": "claude-sonnet-4.5",
-  "gpt-4o": "gpt-4o",
-  "gpt-4o-mini": "gpt-4o-mini",
-  o1: "o1",
-  "o1-mini": "o1-mini",
-};
+interface CachedModel {
+  id: string;
+  name: string;
+  family: string;
+  vendor: string;
+  displayName: string;
+}
 
 export class ModelSelector {
+  /**
+   * Cache of discovered models (updated on each listAvailableModels call)
+   */
+  private _modelCache: Map<string, CachedModel> = new Map();
+
   /**
    * Parse --model override from prompt
    * Returns the model and cleaned prompt without the flag
@@ -113,29 +117,38 @@ export class ModelSelector {
   /**
    * Select a language model from VS Code
    * Returns the requested model if available, falls back to default
+   * Now supports custom models from any vendor, not just Copilot
    */
   async selectModel(
     requestedModel: string,
     fallbackModel: vscode.LanguageModelChat
   ): Promise<vscode.LanguageModelChat> {
     try {
-      // First try to find by ID exactly
-      let models = await vscode.lm.selectChatModels({
-        vendor: "copilot",
-        id: requestedModel,
-      });
+      const normalizedRequest = requestedModel.toLowerCase();
 
-      if (models.length === 0) {
-        // Try by family (using our mapping or the string itself)
-        const family = MODEL_FAMILIES[requestedModel as SpeckyModel] || requestedModel;
-        models = await vscode.lm.selectChatModels({
-          vendor: "copilot",
-          family,
-        });
+      // Get ALL available models (from all vendors, including custom ones)
+      const allModels = await vscode.lm.selectChatModels({});
+
+      // First try exact ID match
+      let found = allModels.find((m) => m.id.toLowerCase() === normalizedRequest);
+
+      if (!found) {
+        // Try matching by family
+        found = allModels.find((m) => m.family.toLowerCase() === normalizedRequest);
       }
 
-      if (models.length > 0) {
-        return models[0];
+      if (!found) {
+        // Try partial match on ID (e.g., "glm-4.7" matches "z.ai/glm-4.7")
+        found = allModels.find((m) => m.id.toLowerCase().includes(normalizedRequest));
+      }
+
+      if (!found) {
+        // Try matching by name
+        found = allModels.find((m) => m.name.toLowerCase().includes(normalizedRequest));
+      }
+
+      if (found) {
+        return found;
       }
 
       // Silent fallback to the request's default model
@@ -147,9 +160,36 @@ export class ModelSelector {
   }
 
   /**
-   * List all available Copilot models
+   * List all available language models from ALL vendors
+   * Includes Copilot models and custom models (e.g., Generic Compatible)
    */
   async listAvailableModels(): Promise<vscode.LanguageModelChat[]> {
+    try {
+      // Empty selector returns ALL models from ALL vendors
+      const models = await vscode.lm.selectChatModels({});
+
+      // Update the cache for display name lookups
+      this._modelCache.clear();
+      for (const model of models) {
+        this._modelCache.set(model.id.toLowerCase(), {
+          id: model.id,
+          name: model.name,
+          family: model.family,
+          vendor: model.vendor,
+          displayName: this._formatDisplayName(model),
+        });
+      }
+
+      return models;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * List only Copilot models (for backward compatibility)
+   */
+  async listCopilotModels(): Promise<vscode.LanguageModelChat[]> {
     try {
       return await vscode.lm.selectChatModels({ vendor: "copilot" });
     } catch {
@@ -158,10 +198,38 @@ export class ModelSelector {
   }
 
   /**
+   * Get cached models info (call listAvailableModels first to populate)
+   */
+  getCachedModels(): CachedModel[] {
+    return Array.from(this._modelCache.values());
+  }
+
+  /**
+   * Format a display name for a model
+   */
+  private _formatDisplayName(model: vscode.LanguageModelChat): string {
+    // For non-Copilot models, include vendor info
+    if (model.vendor !== "copilot") {
+      return `${model.name} (${model.vendor})`;
+    }
+    return model.name;
+  }
+
+  /**
    * Get human-readable model name
+   * Now dynamically looks up from cache, with fallback to known names
    */
   getModelDisplayName(model: string): string {
-    const names: Record<string, string> = {
+    const normalizedModel = model.toLowerCase();
+
+    // Check cache first (populated by listAvailableModels)
+    const cached = this._modelCache.get(normalizedModel);
+    if (cached) {
+      return cached.displayName;
+    }
+
+    // Fallback to known Copilot models
+    const knownNames: Record<string, string> = {
       "claude-opus-4.5": "Claude Opus 4.5",
       "claude-sonnet-4.5": "Claude Sonnet 4.5",
       "gpt-4o": "GPT-4o",
@@ -169,6 +237,7 @@ export class ModelSelector {
       o1: "o1",
       "o1-mini": "o1 Mini",
     };
-    return names[model] || model;
+
+    return knownNames[normalizedModel] || model;
   }
 }
