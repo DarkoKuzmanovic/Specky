@@ -33,6 +33,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["out/**", "node_modules/**", "**/*.d.ts"],
+    ignores: ["out/**", "node_modules/**", "**/*.d.ts", "eslint.config.mjs"],
   }
 );

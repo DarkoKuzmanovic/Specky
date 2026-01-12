@@ -4,7 +4,7 @@
  */
 
 import * as vscode from "vscode";
-import { SpeckyCommand, SpeckyModel, ModelOverride } from "../types.js";
+import { SpeckyCommand, ModelOverride } from "../types.js";
 
 /**
  * Commands that use the planning model
@@ -25,6 +25,17 @@ interface CachedModel {
   family: string;
   vendor: string;
   displayName: string;
+}
+
+/**
+ * Result of parsing implementation flags from prompt
+ */
+export interface ImplementFlags {
+  review: boolean;
+  model: string | null;
+  dryRun: boolean;
+  taskNumber: number | null;
+  cleanPrompt: string;
 }
 
 export class ModelSelector {
@@ -51,6 +62,86 @@ export class ModelSelector {
       model: modelName,
       cleanPrompt: prompt.replace(regex, "").trim(),
     };
+  }
+
+  /**
+   * Parse implementation-specific flags from prompt
+   * Supports: --review (triggers code review before completing)
+   *           --model <name> (override implementation model)
+   *           --dry-run (preview changes via diff, do not apply)
+   *           --task <n> (select task by 1-based index)
+   * Also supports: leading numeric selector (e.g. "3" or "#3")
+   */
+  parseImplementFlags(prompt: string): ImplementFlags {
+    let cleanPrompt = prompt;
+    let review = false;
+    let model: string | null = null;
+    let dryRun = false;
+    let taskNumber: number | null = null;
+
+    // Check for --review flag
+    const reviewRegex = /--review\b/i;
+    if (reviewRegex.test(cleanPrompt)) {
+      review = true;
+      cleanPrompt = cleanPrompt.replace(reviewRegex, "").trim();
+    }
+
+    // Check for --dry-run flag
+    const dryRunRegex = /--dry-run\b/i;
+    if (dryRunRegex.test(cleanPrompt)) {
+      dryRun = true;
+      cleanPrompt = cleanPrompt.replace(dryRunRegex, "").trim();
+    }
+
+    // Check for --task selector
+    const taskRegex = /--task(?:=|\s+)(\d+)\b/i;
+    const taskMatch = cleanPrompt.match(taskRegex);
+    if (taskMatch) {
+      const parsed = Number.parseInt(taskMatch[1], 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        taskNumber = parsed;
+      }
+      cleanPrompt = cleanPrompt.replace(taskRegex, "").trim();
+    }
+
+    // Check for --model override
+    const modelRegex = /--model\s+(\S+)/i;
+    const modelMatch = cleanPrompt.match(modelRegex);
+    if (modelMatch) {
+      model = modelMatch[1].toLowerCase();
+      cleanPrompt = cleanPrompt.replace(modelRegex, "").trim();
+    }
+
+    // Leading selector: "3" or "#3" as the first token
+    if (taskNumber === null) {
+      const leadingTaskRegex = /^\s*#?(\d+)\b/;
+      const leadingMatch = cleanPrompt.match(leadingTaskRegex);
+      if (leadingMatch) {
+        const parsed = Number.parseInt(leadingMatch[1], 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          taskNumber = parsed;
+          cleanPrompt = cleanPrompt.replace(leadingTaskRegex, "").trim();
+        }
+      }
+    }
+
+    return { review, model, dryRun, taskNumber, cleanPrompt };
+  }
+
+  /**
+   * Get the configured review model
+   */
+  getReviewModel(): string {
+    const config = vscode.workspace.getConfiguration("specky");
+    return config.get<string>("reviewModel", "claude-opus-4.5");
+  }
+
+  /**
+   * Get auto-complete task setting
+   */
+  shouldAutoCompleteTask(): boolean {
+    const config = vscode.workspace.getConfiguration("specky");
+    return config.get<boolean>("autoCompleteTask", true);
   }
 
   /**

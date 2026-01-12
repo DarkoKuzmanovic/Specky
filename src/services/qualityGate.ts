@@ -119,7 +119,8 @@ export class QualityGateService {
       }
 
       // Check for required sections
-      const requiredSections = ["## Overview", "## Requirements", "## Acceptance Criteria"];
+      // Keep in sync with the /specify output format in src/chat/prompts.ts
+      const requiredSections = ["## Problem Statement", "## Functional Requirements", "## Error Scenarios"];
       const missingSections = requiredSections.filter(
         (section) => !content.toLowerCase().includes(section.toLowerCase())
       );

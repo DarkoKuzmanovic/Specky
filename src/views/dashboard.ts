@@ -1152,6 +1152,35 @@ export class SpeckyDashboard {
                                 </div>
                             </div>
                         </div>
+
+                        <div class="guide-section">
+                            <div class="guide-section-title">
+                                <i class="codicon codicon-settings"></i>
+                                Implement Options
+                            </div>
+                            <div class="commands-list">
+                                <div class="command-row">
+                                    <span class="command-tag">--review</span>
+                                    <span class="command-desc">Run a code review step before auto-completing the task.</span>
+                                </div>
+                                <div class="command-row">
+                                    <span class="command-tag">--dry-run</span>
+                                    <span class="command-desc">Preview the proposed file changes in diff views without writing files.</span>
+                                </div>
+                                <div class="command-row">
+                                    <span class="command-tag">--task 3</span>
+                                    <span class="command-desc">Select a specific task by index (1-based) instead of the next incomplete one.</span>
+                                </div>
+                                <div class="command-row">
+                                    <span class="command-tag">--model gpt-4o</span>
+                                    <span class="command-desc">Temporarily override the model used for this run.</span>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: var(--s3); font-size: 12px; color: var(--color-secondary);">
+                                Example: <span class="command-tag">@specky /implement 3 --dry-run --review</span>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card">
@@ -1177,7 +1206,7 @@ export class SpeckyDashboard {
                             </div>
                             <div class="command-row">
                                 <span class="command-tag">/implement</span>
-                                <span class="command-desc">Start or continue implementation. Works through tasks sequentially with full context awareness.</span>
+                                <span class="command-desc">Start or continue implementation. Supports task selection, dry-run diffs, and optional review.</span>
                             </div>
                         </div>
                     </div>
@@ -1248,6 +1277,27 @@ export class SpeckyDashboard {
                                 <div class="tip-desc">
                                     Run /specify again on an existing feature to refine it. Specky will update the spec
                                     while preserving your existing work and progress.
+                                </div>
+                            </div>
+
+                            <div class="tip-card">
+                                <div class="tip-header">
+                                    <i class="codicon codicon-diff"></i>
+                                    <span class="tip-title">Preview Before Applying</span>
+                                </div>
+                                <div class="tip-desc">
+                                    If you want to inspect changes before writing files, use <code>--dry-run</code> with <code>/implement</code>
+                                    to open diff previews for each proposed file.
+                                </div>
+                            </div>
+
+                            <div class="tip-card">
+                                <div class="tip-header">
+                                    <i class="codicon codicon-terminal"></i>
+                                    <span class="tip-title">Run Commands From Chat</span>
+                                </div>
+                                <div class="tip-desc">
+                                    When Specky suggests shell commands, you can run them via one-click links. Specky will always ask for confirmation first.
                                 </div>
                             </div>
                         </div>

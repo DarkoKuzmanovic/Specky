@@ -18,6 +18,23 @@ Specky follows a structured lifecycle to ensure high-quality implementation:
 4. **Tasks** (`/tasks`): Break the plan into actionable items. Creates `tasks.md`.
 5. **Implement** (`/implement`): Code the solution. Requires Quality Gates to pass.
 
+### Implement Options
+
+`/implement` supports a few optional flags to make iteration safer and faster:
+
+- `--review`: run a code review step before auto-completing the task.
+- `--dry-run`: preview proposed file changes in diff views without writing any files.
+- `--task <n>` (or `/implement <n>`): select a specific task by 1-based index.
+- `--model <name>`: override the implementation model for this run.
+
+Examples:
+
+```text
+@specky /implement --review
+@specky /implement 3 --dry-run
+@specky /implement --task 2 --model gpt-4o
+```
+
 ### Quality Gates
 
 Before `/implement` can proceed, Specky runs quality checks:
@@ -72,6 +89,8 @@ You can override models inline in chat:
 - **No Active Feature**: If you have multiple features, `@specky` will prompt you to pick one unless you've set an active one in the tree view.
 - **Implementation Blocked**: Ensure all files exist. Warnings (like missing sections) won't stop implementation, but missing artifacts will.
 - **Task Detection**: Specky relies on standard Markdown checkboxes (`- [ ]` or `- [x]`). Ensure your `tasks.md` uses this format.
+- **Dry-Run Preview**: If you want to inspect changes before applying, use `@specky /implement --dry-run`.
+- **Run Links**: If Specky shows clickable “Run” links for shell commands, they will always ask for confirmation before sending text to a terminal.
 - **Workspace Required**: Specky functionality is disabled until a folder is opened.
 
 ## License

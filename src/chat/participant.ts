@@ -4,7 +4,7 @@
  */
 
 import * as vscode from "vscode";
-import { SpeckyCommand, Feature } from "../types.js";
+import { SpeckyCommand, Feature, Task } from "../types.js";
 import { SpeckyFileManager } from "../services/fileManager.js";
 import { ModelSelector } from "../services/modelSelector.js";
 import { QualityGateService } from "../services/qualityGate.js";
@@ -33,6 +33,8 @@ const FOLLOWUP_MAP: Record<string, vscode.ChatFollowup[]> = {
 export class SpeckyChatParticipant {
   private participant: vscode.ChatParticipant;
   private activeFeature: Feature | null = null;
+
+  private static readonly MAX_SMART_CONTEXT_CHARS = 20_000;
 
   constructor(
     private readonly fileManager: SpeckyFileManager,
@@ -345,7 +347,9 @@ export class SpeckyChatParticipant {
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken
   ): Promise<vscode.ChatResult> {
-    const { model: targetModel, cleanPrompt } = this.modelSelector.getEffectiveModel("implement", request.prompt);
+    // Parse implementation-specific flags (--review, --model)
+    const flags = this.modelSelector.parseImplementFlags(request.prompt);
+    const targetModel = flags.model || this.modelSelector.getConfiguredModel("implement");
 
     if (!this.activeFeature) {
       stream.markdown("❌ No active feature. Use `/specify` first.");
@@ -366,14 +370,19 @@ export class SpeckyChatParticipant {
 
     stream.markdown(`🚀 **Implementing** (using ${this.modelSelector.getModelDisplayName(targetModel)})\n\n`);
 
-    // Get next task
-    const nextTask = await this.progressTracker.getNextTask(this.activeFeature.id);
+    // Get selected task (or next incomplete)
+    const selectedTask = await this.getSelectedTask(this.activeFeature.id, flags.taskNumber);
+    const nextTask = selectedTask;
     if (!nextTask) {
       stream.markdown("✅ All tasks are complete! No more tasks to implement.");
       return { metadata: { command: "implement" } };
     }
 
-    stream.markdown(`**Current task**: ${nextTask.title}\n\n`);
+    if (flags.taskNumber) {
+      stream.markdown(`**Selected task** (#${flags.taskNumber}): ${nextTask.title}\n\n`);
+    } else {
+      stream.markdown(`**Current task**: ${nextTask.title}\n\n`);
+    }
 
     // Read all artifacts
     const spec = await this.fileManager.readArtifact(this.activeFeature.id, "spec");
@@ -382,6 +391,9 @@ export class SpeckyChatParticipant {
 
     // Gather workspace context for implementation guidance
     const workspaceContext = await this.getWorkspaceContext();
+
+    // Smart context: pull in referenced file contents from the task itself
+    const smartContext = await this.getSmartContextFromTask(nextTask.title);
 
     const chatModel = await this.modelSelector.selectModel(targetModel, request.model);
     const systemPrompt = CommandPrompts.implement(
@@ -392,23 +404,533 @@ export class SpeckyChatParticipant {
       nextTask.title,
       workspaceContext || undefined
     );
-    const userPrompt = cleanPrompt || `Implement the task: "${nextTask.title}"`;
+    const userPrompt = flags.cleanPrompt || `Implement the task: "${nextTask.title}"`;
 
     const messages = [
       vscode.LanguageModelChatMessage.User(systemPrompt),
+      ...(smartContext ? [vscode.LanguageModelChatMessage.User(smartContext)] : []),
       vscode.LanguageModelChatMessage.User(userPrompt),
     ];
 
     const response = await chatModel.sendRequest(messages, {}, token);
 
+    let fullResponse = "";
     for await (const chunk of response.text) {
       stream.markdown(chunk);
+      fullResponse += chunk;
     }
 
     stream.markdown("\n\n---\n");
-    stream.markdown(`After implementing, mark the task complete in \`.specky/${this.activeFeature.id}/tasks.md\``);
+
+    // Parse and apply (or preview) code changes from the response
+    const changeSet = await this.parseCodeChanges(fullResponse);
+
+    if (changeSet.length === 0) {
+      stream.markdown("⚠️ No code blocks with file paths were found in the response.\n");
+      stream.markdown(
+        "The LLM may have provided instructions instead of code. Please implement manually or try again.\n"
+      );
+      return { metadata: { command: "implement" } };
+    }
+
+    if (flags.dryRun) {
+      const previewed = await this.previewCodeChanges(changeSet);
+      stream.markdown(`✅ **Dry-run preview opened for ${previewed} file(s)**. No files were modified.\n\n`);
+      stream.markdown("Tip: Re-run without `--dry-run` to apply the changes.\n");
+      return { metadata: { command: "implement" } };
+    }
+
+    const appliedFiles = await this.applyCodeChanges(changeSet);
+
+    if (appliedFiles.length > 0) {
+      stream.markdown(`✅ **Applied changes to ${appliedFiles.length} file(s)**:\n\n`);
+      for (const file of appliedFiles) {
+        stream.markdown(`- \`${file}\`\n`);
+      }
+      stream.markdown("\n");
+
+      // Detect commands and offer clickable command links (terminal run helpers)
+      const commands = this.extractShellCommands(fullResponse);
+      if (commands.length > 0) {
+        stream.markdown("---\n\n");
+        stream.markdown("### Commands\n\n");
+        stream.markdown("Click to run in a terminal (you will be asked to confirm):\n\n");
+        for (const cmd of commands) {
+          const link = this.makeCommandLink("specky.runInTerminal", [cmd], `Run: ${cmd}`);
+          stream.markdown(`- ${link}\n`);
+        }
+        stream.markdown("\n");
+      }
+
+      // Optional review step if --review flag was passed
+      if (flags.review) {
+        stream.markdown("---\n\n");
+        await this.runCodeReview(
+          stream,
+          token,
+          request.model,
+          this.activeFeature.name,
+          nextTask.title,
+          appliedFiles,
+          fullResponse
+        );
+      }
+
+      // Auto-complete the task if setting is enabled
+      const shouldAutoComplete = this.modelSelector.shouldAutoCompleteTask();
+      if (shouldAutoComplete) {
+        try {
+          await this.progressTracker.toggleTask(this.activeFeature.id, nextTask.id);
+          stream.markdown(`\n✅ **Task marked complete**: ${nextTask.title}\n\n`);
+
+          // Check if there are more tasks
+          const remainingTask = await this.progressTracker.getNextTask(this.activeFeature.id);
+          if (remainingTask) {
+            stream.markdown(`**Next task**: ${remainingTask.title}\n`);
+            stream.markdown("Run `/implement` again to continue.\n");
+          } else {
+            stream.markdown("🎉 **All tasks are now complete!**\n");
+          }
+        } catch {
+          stream.markdown(
+            `⚠️ Could not auto-mark task complete. Please mark manually in \`.specky/${this.activeFeature.id}/tasks.md\`\n`
+          );
+        }
+      } else {
+        stream.markdown(`**Next**: Mark the task complete in \`.specky/${this.activeFeature.id}/tasks.md\`\n`);
+      }
+    } else {
+      stream.markdown("⚠️ No files were modified.\n");
+    }
 
     return { metadata: { command: "implement" } };
+  }
+
+  /**
+   * Run a code review on the implementation using a more powerful model
+   */
+  private async runCodeReview(
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken,
+    fallbackModel: vscode.LanguageModelChat,
+    featureName: string,
+    taskTitle: string,
+    appliedFiles: string[],
+    implementationOutput: string
+  ): Promise<void> {
+    const reviewModelName = this.modelSelector.getReviewModel();
+    stream.markdown(
+      `🔍 **Running Code Review** (using ${this.modelSelector.getModelDisplayName(reviewModelName)})\n\n`
+    );
+
+    try {
+      const reviewModel = await this.modelSelector.selectModel(reviewModelName, fallbackModel);
+      const reviewPrompt = CommandPrompts.review(featureName, taskTitle, appliedFiles, implementationOutput);
+
+      const messages = [
+        vscode.LanguageModelChatMessage.User(reviewPrompt),
+        vscode.LanguageModelChatMessage.User("Please review this implementation."),
+      ];
+
+      const response = await reviewModel.sendRequest(messages, {}, token);
+
+      for await (const chunk of response.text) {
+        stream.markdown(chunk);
+      }
+
+      stream.markdown("\n\n");
+    } catch {
+      stream.markdown("⚠️ Code review failed. Proceeding without review.\n\n");
+    }
+  }
+
+  /**
+   * Parse code blocks from LLM response and apply them to files
+   * Supports both new files and modifications to existing files
+   *
+   * Expected format from LLM:
+   * #### `path/to/file.ts` (new)
+   * ```typescript
+   * code here
+   * ```
+   */
+  private async applyCodeChanges(changes: ParsedFileChange[]): Promise<string[]> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return [];
+    }
+
+    const workspaceRoot = workspaceFolders[0].uri;
+    const appliedFiles: string[] = [];
+    const edit = new vscode.WorkspaceEdit();
+
+    for (const change of changes) {
+      const safeUri = this.safeResolveWorkspaceFile(workspaceRoot, change.path);
+      if (!safeUri) {
+        continue;
+      }
+
+      try {
+        let exists = true;
+        try {
+          await vscode.workspace.fs.stat(safeUri);
+        } catch {
+          exists = false;
+        }
+
+        if (!exists) {
+          edit.createFile(safeUri, { ignoreIfExists: true });
+          edit.insert(safeUri, new vscode.Position(0, 0), change.content);
+          appliedFiles.push(change.path);
+          continue;
+        }
+
+        const doc = await vscode.workspace.openTextDocument(safeUri);
+        const existingContent = doc.getText();
+
+        const shouldReplace =
+          change.content.length > existingContent.length * 0.8 ||
+          change.content.includes("/**") ||
+          change.content.includes("/*") ||
+          change.content.includes("import ") ||
+          change.path.endsWith(".json") ||
+          change.path.endsWith(".yaml") ||
+          change.path.endsWith(".yml") ||
+          change.path.endsWith(".md");
+
+        const nextContent = shouldReplace ? change.content : this.mergeCodeChanges(existingContent, change.content);
+        const fullRange = new vscode.Range(doc.positionAt(0), doc.positionAt(existingContent.length));
+        edit.replace(safeUri, fullRange, nextContent);
+        appliedFiles.push(change.path);
+      } catch {
+        // Skip failures; apply remaining edits
+      }
+    }
+
+    if (appliedFiles.length === 0) {
+      return [];
+    }
+
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (!applied) {
+      return [];
+    }
+
+    // Save affected documents to persist changes to disk
+    for (const filePath of appliedFiles) {
+      const safeUri = this.safeResolveWorkspaceFile(workspaceRoot, filePath);
+      if (!safeUri) {
+        continue;
+      }
+      try {
+        const doc = await vscode.workspace.openTextDocument(safeUri);
+        await doc.save();
+      } catch {
+        // ignore
+      }
+    }
+
+    return appliedFiles;
+  }
+
+  private async previewCodeChanges(changes: ParsedFileChange[]): Promise<number> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return 0;
+    }
+    const workspaceRoot = workspaceFolders[0].uri;
+
+    let opened = 0;
+    for (const change of changes) {
+      const safeUri = this.safeResolveWorkspaceFile(workspaceRoot, change.path);
+      if (!safeUri) {
+        continue;
+      }
+
+      let exists = true;
+      try {
+        await vscode.workspace.fs.stat(safeUri);
+      } catch {
+        exists = false;
+      }
+
+      const rightDoc = await vscode.workspace.openTextDocument({
+        content: change.content,
+        language: this.guessLanguageId(change.path),
+      });
+
+      const leftUri = exists
+        ? safeUri
+        : (
+            await vscode.workspace.openTextDocument({
+              content: "",
+              language: this.guessLanguageId(change.path),
+            })
+          ).uri;
+
+      const title = exists ? `Preview: ${change.path}` : `Preview (new): ${change.path}`;
+      await vscode.commands.executeCommand("vscode.diff", leftUri, rightDoc.uri, title);
+      opened += 1;
+    }
+
+    return opened;
+  }
+
+  private async parseCodeChanges(response: string): Promise<ParsedFileChange[]> {
+    const changes: ParsedFileChange[] = [];
+    const fileBlockRegex = /####\s*`([^`]+)`[^\n]*\n```(?:\w+)?\n([\s\S]*?)\n```/g;
+
+    let match;
+    while ((match = fileBlockRegex.exec(response)) !== null) {
+      const filePath = match[1]?.trim();
+      const code = match[2];
+      if (!filePath || filePath.length === 0 || code === undefined) {
+        continue;
+      }
+      changes.push({ path: filePath, content: code });
+    }
+
+    return changes;
+  }
+
+  private safeResolveWorkspaceFile(workspaceRoot: vscode.Uri, relativePath: string): vscode.Uri | null {
+    const normalized = relativePath.replace(/\\/g, "/").trim();
+
+    if (normalized.length === 0) {
+      return null;
+    }
+
+    if (normalized.startsWith("/") || normalized.startsWith("~")) {
+      return null;
+    }
+
+    // Prevent traversal and other suspicious paths
+    const segments = normalized.split("/");
+    if (segments.some((s) => s === ".." || s === "." || s.length === 0)) {
+      return null;
+    }
+
+    // Basic Windows drive guard
+    if (/^[a-zA-Z]:/.test(normalized)) {
+      return null;
+    }
+
+    return vscode.Uri.joinPath(workspaceRoot, ...segments);
+  }
+
+  private guessLanguageId(filePath: string): string {
+    switch (true) {
+      case filePath.endsWith(".ts"):
+        return "typescript";
+      case filePath.endsWith(".js"):
+        return "javascript";
+      case filePath.endsWith(".json"):
+        return "json";
+      case filePath.endsWith(".md"):
+        return "markdown";
+      case filePath.endsWith(".css"):
+        return "css";
+      case filePath.endsWith(".html"):
+        return "html";
+      case filePath.endsWith(".yml") || filePath.endsWith(".yaml"):
+        return "yaml";
+      default:
+        return "plaintext";
+    }
+  }
+
+  private makeCommandLink(commandId: string, args: unknown[], label: string): string {
+    const encodedArgs = encodeURIComponent(JSON.stringify(args));
+    return `[${label}](command:${commandId}?${encodedArgs})`;
+  }
+
+  private extractShellCommands(response: string): string[] {
+    const commands: string[] = [];
+
+    // Prefer bash fenced blocks
+    const blockRegex = /```(?:bash|sh|shell)\n([\s\S]*?)\n```/gi;
+    let blockMatch;
+    while ((blockMatch = blockRegex.exec(response)) !== null) {
+      const block = blockMatch[1] || "";
+      for (const rawLine of block.split("\n")) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) {
+          continue;
+        }
+        const stripped = line.startsWith("$") ? line.slice(1).trim() : line;
+        if (!stripped) {
+          continue;
+        }
+        commands.push(stripped);
+      }
+    }
+
+    // De-dup while preserving order
+    return Array.from(new Set(commands)).slice(0, 10);
+  }
+
+  private async getSelectedTask(featureId: string, taskNumber: number | null): Promise<Task | null> {
+    if (!taskNumber) {
+      return await this.progressTracker.getNextTask(featureId);
+    }
+
+    const tasks = await this.progressTracker.getTasks(featureId);
+    const flat = this.flattenTasks(tasks);
+    const idx = taskNumber - 1;
+    if (idx < 0 || idx >= flat.length) {
+      return null;
+    }
+    return flat[idx];
+  }
+
+  private flattenTasks(tasks: Task[]): Task[] {
+    const out: Task[] = [];
+    const walk = (items: Task[]) => {
+      for (const task of items) {
+        out.push(task);
+        if (task.subtasks) {
+          walk(task.subtasks);
+        }
+      }
+    };
+    walk(tasks);
+    return out;
+  }
+
+  private async getSmartContextFromTask(taskTitle: string): Promise<string> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return "";
+    }
+
+    const workspaceRoot = workspaceFolders[0].uri;
+    const paths = this.extractFilePathsFromText(taskTitle);
+    if (paths.length === 0) {
+      return "";
+    }
+
+    const chunks: string[] = [];
+    let used = 0;
+
+    for (const path of paths) {
+      const safeUri = this.safeResolveWorkspaceFile(workspaceRoot, path);
+      if (!safeUri) {
+        continue;
+      }
+      try {
+        const stat = await vscode.workspace.fs.stat(safeUri);
+        if (stat.type !== vscode.FileType.File) {
+          continue;
+        }
+        const content = Buffer.from(await vscode.workspace.fs.readFile(safeUri)).toString("utf-8");
+        if (!content) {
+          continue;
+        }
+
+        const header = `\n\n<file path="${path}">\n`;
+        const footer = `\n</file>\n`;
+        const remaining = SpeckyChatParticipant.MAX_SMART_CONTEXT_CHARS - used;
+        if (remaining <= 0) {
+          break;
+        }
+        const included = content.slice(0, Math.max(0, remaining - header.length - footer.length));
+        if (!included) {
+          break;
+        }
+
+        chunks.push(header + included + footer);
+        used += header.length + included.length + footer.length;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (chunks.length === 0) {
+      return "";
+    }
+
+    return `<smart_context>\nThe following files are referenced by the task. Use them as ground truth and avoid guessing.\n${chunks.join(
+      "\n"
+    )}\n</smart_context>`;
+  }
+
+  private extractFilePathsFromText(text: string): string[] {
+    const found = new Set<string>();
+
+    // Backticked paths: `src/foo.ts`
+    for (const m of text.matchAll(/`([^`]+\.(?:ts|js|tsx|jsx|json|md|yml|yaml|css|html))`/gi)) {
+      found.add(m[1]);
+    }
+
+    // Plain paths like src/foo.ts
+    for (const m of text.matchAll(/\b([\w.-]+(?:\/[\w.-]+)+\.(?:ts|js|tsx|jsx|json|md|yml|yaml|css|html))\b/gi)) {
+      found.add(m[1]);
+    }
+
+    return Array.from(found).slice(0, 6);
+  }
+
+  /**
+   * Simple merge strategy: find matching code blocks and replace them
+   * Looks for class/function/const declarations to identify sections
+   */
+  private mergeCodeChanges(existing: string, newCode: string): string {
+    // Extract function/class/const names from the new code
+    const declarationRegex = /^\s*(export\s+)?(async\s+)?(function|class|const|let|var|interface|type)\s+(\w+)/m;
+    const match = newCode.match(declarationRegex);
+
+    if (!match) {
+      // Can't identify what to replace, do full replacement
+      return newCode;
+    }
+
+    const name = match[4];
+
+    // Find and replace matching declaration in existing code
+    // This is a simple heuristic - looks for the same declaration
+    const existingDeclRegex = new RegExp(
+      `^\\s*(export\\s+)?(async\\s+)?(function|class|const|let|var|interface|type)\\s+${name}\\b`,
+      "m"
+    );
+
+    if (!existingDeclRegex.test(existing)) {
+      // Declaration doesn't exist, just append
+      return existing + "\n\n" + newCode;
+    }
+
+    // Find the extent of the declaration and replace it
+    // This is a simplified approach - for complex cases, full replacement is safer
+    const lines = existing.split("\n");
+    const newLines = newCode.split("\n");
+
+    // Find the line with the declaration
+    let startLine = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (existingDeclRegex.test(lines[i])) {
+        startLine = i;
+        break;
+      }
+    }
+
+    if (startLine === -1) {
+      return existing + "\n\n" + newCode;
+    }
+
+    // Simple heuristic: replace until the next declaration or end
+    let endLine = lines.length;
+    const nextDeclRegex = /^\s*(export\s+)?(async\s+)?(function|class|const|let|var|interface|type)\s+\w+/;
+
+    for (let i = startLine + 1; i < lines.length; i++) {
+      if (nextDeclRegex.test(lines[i])) {
+        endLine = i;
+        break;
+      }
+    }
+
+    // Replace the section
+    const result = [...lines.slice(0, startLine), ...newLines, ...lines.slice(endLine)].join("\n");
+
+    return result;
   }
 
   private async handleClarify(
@@ -474,7 +996,14 @@ export class SpeckyChatParticipant {
     stream.markdown("- `/clarify` - Identify ambiguities in your spec\n");
     stream.markdown("- `/plan` - Create a technical plan\n");
     stream.markdown("- `/tasks` - Break down into implementable tasks\n");
-    stream.markdown("- `/implement` - Implement tasks (after quality gates pass)\n\n");
+    stream.markdown("- `/implement` - Implement tasks (auto-completes after success)\n\n");
+
+    stream.markdown("## Implement Options\n\n");
+    stream.markdown("- `--review` - Run code review with a more powerful model before completing\n");
+    stream.markdown("- `--dry-run` - Preview changes in a diff view without writing files\n");
+    stream.markdown("- `--task <n>` or `/implement <n>` - Select a specific task by index\n");
+    stream.markdown("- `--model <name>` - Override the implementation model\n\n");
+    stream.markdown("**Examples**: `@specky /implement --review`, `@specky /implement 3 --dry-run`\n\n");
 
     if (this.activeFeature) {
       stream.markdown(`**Active Feature**: ${this.activeFeature.name}\n`);
@@ -509,4 +1038,9 @@ export class SpeckyChatParticipant {
   dispose(): void {
     this.participant.dispose();
   }
+}
+
+interface ParsedFileChange {
+  path: string;
+  content: string;
 }

@@ -41,6 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from Phosphor icons to VS Code codicons for better integration
 - Updated ChatFollowup `message` property to `label` for API compatibility
 
+### Added
+
+- `/implement` QoL flags: task selection (`/implement 3` or `--task 3`) and `--dry-run` diff preview
+- WorkspaceEdit-based code application for `/implement` (single-step undo support)
+- Command links for running suggested shell commands with confirmation (`specky.runInTerminal`)
+- Smart context injection: task-referenced files are read and included as ground truth
+
+### Changed
+
+- Dashboard Help content updated to document new `/implement` options
+
 ## [0.1.0] - 2026-01-11
 
 ### Added

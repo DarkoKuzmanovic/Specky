@@ -15,6 +15,8 @@
 | Extension Icon                                                      | ❌ Missing  |
 | Quality Gate/Prompt Alignment                                       | ❌ Mismatch |
 
+| /implement QoL (dry-run, task select, run links) | ✅ Complete |
+
 ---
 
 ## Sprint 1: Critical Fixes
@@ -31,7 +33,11 @@
   > ✅ Completed: Updated versions to 0.1.x scheme (0.1.1)
 
 - [ ] Verify `.vscodeignore` excludes dev artifacts
+
   > Ensure `src/`, `*.ts`, `node_modules/`, `.vscode/`, test files are excluded from VSIX
+
+- [ ] Add `/implement` flag documentation to README
+  > Include `--dry-run`, `--task`, and command links behavior
 
 ---
 

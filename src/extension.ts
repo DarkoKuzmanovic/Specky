@@ -162,6 +162,36 @@ function registerCommands(context: vscode.ExtensionContext): void {
     })
   );
 
+  // Run a shell command in an integrated terminal (used by command links in chat)
+  context.subscriptions.push(
+    vscode.commands.registerCommand("specky.runInTerminal", async (commandText: string) => {
+      if (!vscode.workspace.isTrusted) {
+        vscode.window.showWarningMessage("Workspace must be trusted to run terminal commands.");
+        return;
+      }
+
+      const trimmed = String(commandText || "").trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const selection = await vscode.window.showWarningMessage(
+        `Run command in terminal?\n\n${trimmed}`,
+        { modal: true },
+        "Run",
+        "Cancel"
+      );
+
+      if (selection !== "Run") {
+        return;
+      }
+
+      const terminal = vscode.window.activeTerminal ?? vscode.window.createTerminal("Specky");
+      terminal.show(true);
+      terminal.sendText(trimmed, true);
+    })
+  );
+
   // Select Model for specific command (called from tree view)
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -209,6 +239,12 @@ function registerMinimalCommands(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("specky.refreshArtifacts", () => {
       // No-op
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("specky.runInTerminal", () => {
+      vscode.window.showWarningMessage("Specky requires a trusted workspace folder to run terminal commands.");
     })
   );
 }

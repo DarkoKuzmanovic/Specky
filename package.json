@@ -157,6 +157,11 @@
         "command": "specky.toggleTask",
         "title": "Toggle Task Completion",
         "category": "Specky"
+      },
+      {
+        "command": "specky.runInTerminal",
+        "title": "Run Command in Terminal",
+        "category": "Specky"
       }
     ],
     "menus": {
@@ -250,6 +255,16 @@
           "type": "string",
           "default": "claude-sonnet-4.5",
           "description": "Model for /tasks command"
+        },
+        "specky.reviewModel": {
+          "type": "string",
+          "default": "claude-opus-4.5",
+          "description": "Model for reviewing implementations (used with --review flag)"
+        },
+        "specky.autoCompleteTask": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically mark tasks as complete after successful implementation"
         }
       }
     }
